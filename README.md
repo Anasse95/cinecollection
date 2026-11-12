@@ -70,4 +70,4 @@ PHP 8, MySQL / MariaDB, PDO, HTML5, CSS3 (Grid, variables), JavaScript.
 - Premier commit : version rendue en L2 (connexion simple, une table de films par utilisateur).
 - v2 : nouvelle base de données relationnelle, comptes avec email et rôles, profil, administration, listes, avis, commentaires et collections publiques.
 
-Le rapport et la présentation de la version d'origine sont dans le dossier `docs`.
+Le rapport et la présentation (mis à jour pour la v2) sont dans le dossier `docs`. Leurs versions d'origine restent consultables dans le premier commit.
