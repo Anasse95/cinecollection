@@ -1,102 +1,86 @@
 <?php
-session_start();
-require_once 'config.php';
+// Actions rapides envoyées en POST depuis les différentes pages.
+require __DIR__ . '/inc/bootstrap.php';
+$moi = exiger_connexion($pdo);
 
-$action = $_GET['action'] ?? $_POST['action'] ?? '';
+if (!est_post()) {
+    rediriger('index.php');
+}
+verifier_csrf();
 
-// ==========================================
-// 1. INSCRIPTION ET CONNEXION
-// ==========================================
-if ($action === 'auth') {
-    $mode = $_POST['mode']; // 'login' ou 'register'
-    $username = trim($_POST['username']);
-    $password = trim($_POST['password']);
+$action = $_POST['action'] ?? '';
+$retour = $_SERVER['HTTP_REFERER'] ?? 'index.php';
+// On ne revient que vers une page de ce site
+if (parse_url($retour, PHP_URL_HOST) !== null && parse_url($retour, PHP_URL_HOST) !== ($_SERVER['HTTP_HOST'] ?? '')) {
+    $retour = 'index.php';
+}
 
-    if (empty($username) || empty($password)) {
-        $_SESSION['error'] = "Veuillez remplir tous les champs.";
-        header("Location: index.php"); exit;
-    }
+switch ($action) {
+    case 'toggle_favori':
+        $pdo->prepare('UPDATE collection SET favori = 1 - favori WHERE id = ? AND user_id = ?')
+            ->execute([(int)($_POST['id'] ?? 0), $moi['id']]);
+        rediriger($retour);
+        break;
 
-    if ($mode === 'register') {
-        // Vérifier si le pseudo existe déjà
-        $stmt = $pdo->prepare("SELECT id FROM users WHERE username = ?");
-        $stmt->execute([$username]);
-        if ($stmt->fetch()) {
-            $_SESSION['error'] = "Cet identifiant est déjà pris.";
-        } else {
-            // Créer le compte avec un mot de passe crypté
-            $hash = password_hash($password, PASSWORD_DEFAULT);
-            $stmt = $pdo->prepare("INSERT INTO users (username, password) VALUES (?, ?)");
-            $stmt->execute([$username, $hash]);
-            
-            $_SESSION['user_id'] = $pdo->lastInsertId();
-            $_SESSION['username'] = $username;
-            $_SESSION['success'] = "Compte créé ! Bienvenue $username.";
+    case 'supprimer_entree':
+        $pdo->prepare('DELETE FROM collection WHERE id = ? AND user_id = ?')
+            ->execute([(int)($_POST['id'] ?? 0), $moi['id']]);
+        flash('success', 'Film retiré de votre collection.');
+        rediriger('index.php');
+        break;
+
+    case 'ajouter_a_voir':
+        // Ajoute un film vu chez un autre membre dans sa propre liste "À voir"
+        $filmId = (int)($_POST['film_id'] ?? 0);
+        $stmt = $pdo->prepare('SELECT titre FROM films WHERE id = ?');
+        $stmt->execute([$filmId]);
+        $titre = $stmt->fetchColumn();
+        if ($titre !== false) {
+            $stmt = $pdo->prepare("INSERT IGNORE INTO collection (user_id, film_id, statut) VALUES (?, ?, 'a_voir')");
+            $stmt->execute([$moi['id'], $filmId]);
+            flash('success', $stmt->rowCount() > 0
+                ? "« $titre » ajouté à votre liste À voir."
+                : "« $titre » est déjà dans votre collection.");
         }
-    } elseif ($mode === 'login') {
-        // Connexion
-        $stmt = $pdo->prepare("SELECT * FROM users WHERE username = ?");
-        $stmt->execute([$username]);
-        $user = $stmt->fetch();
+        rediriger($retour);
+        break;
 
-        if ($user && password_verify($password, $user['password'])) {
-            $_SESSION['user_id'] = $user['id'];
-            $_SESSION['username'] = $user['username'];
-            $_SESSION['success'] = "Bon retour, $username !";
+    case 'commenter':
+        $collectionId = (int)($_POST['collection_id'] ?? 0);
+        $contenu = trim($_POST['contenu'] ?? '');
+        // On ne peut commenter que l'avis d'une collection publique (ou le sien)
+        $stmt = $pdo->prepare('SELECT c.id FROM collection c JOIN users u ON u.id = c.user_id
+            WHERE c.id = ? AND c.avis IS NOT NULL AND (u.is_public = 1 OR u.id = ?)');
+        $stmt->execute([$collectionId, $moi['id']]);
+        if ($stmt->fetchColumn() === false) {
+            flash('error', 'Impossible de commenter cet avis.');
+        } elseif ($contenu === '' || mb_strlen($contenu) > 1000) {
+            flash('error', 'Le commentaire doit faire entre 1 et 1000 caractères.');
         } else {
-            $_SESSION['error'] = "Identifiant ou mot de passe incorrect.";
+            $pdo->prepare('INSERT INTO commentaires (collection_id, user_id, contenu) VALUES (?, ?, ?)')
+                ->execute([$collectionId, $moi['id'], $contenu]);
+            flash('success', 'Commentaire publié.');
         }
-    }
-    header("Location: index.php"); exit;
+        rediriger($retour);
+        break;
+
+    case 'supprimer_commentaire':
+        // Autorisé pour l'auteur du commentaire, le propriétaire de l'avis ou un admin
+        $stmt = $pdo->prepare('SELECT co.user_id AS auteur, c.user_id AS proprietaire
+            FROM commentaires co JOIN collection c ON c.id = co.collection_id WHERE co.id = ?');
+        $stmt->execute([(int)($_POST['id'] ?? 0)]);
+        $com = $stmt->fetch();
+        $autorise = $com && (
+            in_array((int)$moi['id'], [(int)$com['auteur'], (int)$com['proprietaire']], true)
+            || $moi['role'] === 'admin'
+        );
+        if ($autorise) {
+            $pdo->prepare('DELETE FROM commentaires WHERE id = ?')->execute([(int)$_POST['id']]);
+            flash('success', 'Commentaire supprimé.');
+        }
+        rediriger($retour);
+        break;
+
+    default:
+        rediriger('index.php');
 }
-
-// DÉCONNEXION
-if ($action === 'logout') {
-    session_destroy();
-    header("Location: index.php"); exit;
-}
-
-// ==========================================
-// SÉCURITÉ : IL FAUT ÊTRE CONNECTÉ POUR LA SUITE
-// ==========================================
-if (!isset($_SESSION['user_id'])) { die("Accès refusé."); }
-$user_id = $_SESSION['user_id'];
-
-// ==========================================
-// 2. AJOUTER OU MODIFIER UN FILM
-// ==========================================
-if ($action === 'save_film') {
-    $id = $_POST['id'] ?? '';
-    $titre = htmlspecialchars($_POST['titre']);
-    $real = htmlspecialchars($_POST['real']);
-    $annee = (int)$_POST['annee'];
-    $genre = htmlspecialchars($_POST['genre']);
-    $note = (int)$_POST['note'];
-    $img = filter_var($_POST['img'], FILTER_SANITIZE_URL);
-    $desc = htmlspecialchars($_POST['desc']);
-
-    if (!empty($id)) {
-        // UPDATE (On vérifie que c'est bien SON film via user_id)
-        $stmt = $pdo->prepare("UPDATE films SET titre=?, realisateur=?, annee=?, genre=?, note=?, img=?, description=? WHERE id=? AND user_id=?");
-        $stmt->execute([$titre, $real, $annee, $genre, $note, $img, $desc, $id, $user_id]);
-        $_SESSION['success'] = "Film modifié avec succès !";
-    } else {
-        // INSERT
-        $stmt = $pdo->prepare("INSERT INTO films (user_id, titre, realisateur, annee, genre, note, img, description) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-        $stmt->execute([$user_id, $titre, $real, $annee, $genre, $note, $img, $desc]);
-        $_SESSION['success'] = "Film ajouté à votre collection !";
-    }
-    header("Location: index.php"); exit;
-}
-
-// ==========================================
-// 3. SUPPRIMER UN FILM
-// ==========================================
-if ($action === 'delete_film') {
-    $id = (int)$_GET['id'];
-    $stmt = $pdo->prepare("DELETE FROM films WHERE id=? AND user_id=?");
-    $stmt->execute([$id, $user_id]);
-    $_SESSION['success'] = "Film supprimé.";
-    header("Location: index.php"); exit;
-}
-?>
