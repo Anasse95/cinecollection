@@ -1,0 +1,71 @@
+// Bascule entre Connexion et Inscription
+let isLoginMode = true;
+function toggleAuthMode() {
+    isLoginMode = !isLoginMode;
+    document.getElementById('authMode').value = isLoginMode ? 'login' : 'register';
+    document.getElementById('authTitle').innerHTML = isLoginMode ? '&#128272; Connexion' : '&#128100; Inscription';
+    document.getElementById('authDesc').textContent = isLoginMode ? "Connectez-vous pour accéder à votre collection." : "Créez un compte privé.";
+    document.getElementById('authBtn').textContent = isLoginMode ? "Se connecter" : "Créer mon compte";
+    document.getElementById('authToggleBtn').textContent = isLoginMode ? "Pas encore de compte ? S'inscrire ici." : "Déjà un compte ? Se connecter.";
+}
+
+// Recherche instantanée
+const searchInput = document.getElementById('searchInput');
+if (searchInput) {
+    searchInput.addEventListener('input', function(e) {
+        const query = e.target.value.toLowerCase();
+        document.querySelectorAll('.film-card').forEach(card => {
+            const data = card.getAttribute('data-titre');
+            card.style.display = data.includes(query) ? 'block' : 'none';
+        });
+    });
+}
+
+// Gestion des étoiles
+function setRating(v) {
+    document.getElementById('fNote').value = v;
+    document.querySelectorAll('#stars .star').forEach((s, i) => {
+        s.innerHTML = i < v ? '&#9733;' : '&#9734;';
+        s.style.color = i < v ? 'var(--gold)' : 'var(--muted)';
+    });
+}
+
+// Ouvrir les formulaires
+function openAdd() {
+    document.getElementById('mFilmTitle').textContent = 'Ajouter un film';
+    document.getElementById('fId').value = '';
+    document.getElementById('fTitre').value = '';
+    document.getElementById('fReal').value = '';
+    document.getElementById('fAnnee').value = new Date().getFullYear();
+    document.getElementById('fImg').value = '';
+    document.getElementById('fDesc').value = '';
+    setRating(5);
+    openModal('mFilm');
+}
+
+function openEdit(id, titre, real, annee, genre, note, img, desc) {
+    document.getElementById('mFilmTitle').textContent = 'Modifier le film';
+    document.getElementById('fId').value = id;
+    document.getElementById('fTitre').value = titre;
+    document.getElementById('fReal').value = real;
+    document.getElementById('fAnnee').value = annee;
+    document.getElementById('fGenre').value = genre;
+    document.getElementById('fImg').value = img;
+    document.getElementById('fDesc').value = desc;
+    setRating(note);
+    openModal('mFilm');
+}
+
+// Modals & Toast
+function openModal(id) { document.getElementById(id).classList.add('open'); }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+
+function toast(msg, type = 'success') {
+    const w = document.getElementById('toastWrap');
+    const t = document.createElement('div');
+    t.className = `toast ${type === 'error' ? 'error' : ''}`;
+    t.innerHTML = msg;
+    w.appendChild(t);
+    setTimeout(() => t.style.opacity = '0', 3000);
+    setTimeout(() => t.remove(), 3300);
+}
